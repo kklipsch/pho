@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,11 +17,6 @@ import (
 var recurseFlag = cli.BoolFlag{
 	Name:  "recurse,r",
 	Usage: "will recursively walk the gallery",
-}
-
-var fetchFlag = cli.BoolFlag{
-	Name:  "fetch",
-	Usage: "will fetch missing files",
 }
 
 func main() {
@@ -46,11 +42,74 @@ func main() {
 			Name:   "diff",
 			Usage:  "pho diff [remote path] [local path]",
 			Action: diff,
-			Flags:  []cli.Flag{recurseFlag, fetchFlag},
+			Flags:  []cli.Flag{recurseFlag},
+		},
+		{
+			Name:   "fetch",
+			Usage:  "pho fetch [remote path] [local path]",
+			Action: fetch,
+			Flags:  []cli.Flag{recurseFlag},
 		},
 	}
 
 	app.Run(os.Args)
+}
+
+func fetch(ctx *cli.Context) {
+	address := getAddress(ctx)
+	recurse := ctx.Bool("recurse")
+
+	remotePath := "/"
+	if len(ctx.Args()) > 0 {
+		remotePath = ctx.Args()[0]
+	}
+
+	localPath := "."
+	if len(ctx.Args()) > 1 {
+		localPath = ctx.Args()[1]
+	}
+
+	onIndex := func(base string, node string, depth int) error {
+		return nil
+	}
+
+	onLeaf := func(resp *http.Response, node string, ct string) error {
+		switch ct {
+		case "image/jpeg":
+			folder := path.Join(localPath, path.Dir(node))
+			file := path.Base(node)
+			localFile := path.Join(folder, file)
+			_, err := os.Stat(localFile)
+			if os.IsNotExist(err) {
+				os.MkdirAll(folder, os.ModePerm)
+				output, err := os.Create(localFile)
+				if err != nil {
+					return err
+				}
+
+				defer output.Close()
+				defer resp.Body.Close()
+				n, err := io.Copy(output, resp.Body)
+				if err != nil {
+					return err
+				}
+
+				fmt.Printf("Downloaded %v bytes for %s\n", n, localFile)
+			} else if err != nil {
+				return err
+			}
+
+			return nil
+		default:
+			return fmt.Errorf("Unknown content type %v:%v", ct, node)
+		}
+	}
+
+	err := walkPath(address, remotePath, recurse, 0, onIndex, onLeaf)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 }
 
 func diff(ctx *cli.Context) {
