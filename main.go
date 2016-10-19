@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -17,9 +18,15 @@ var recurseFlag = cli.BoolFlag{
 	Usage: "will recursively walk the gallery",
 }
 
+var fetchFlag = cli.BoolFlag{
+	Name:  "fetch",
+	Usage: "will fetch missing files",
+}
+
 func main() {
 	app := cli.NewApp()
 	app.Name = "pho"
+	app.Usage = "scraper for photo gallery 3 galleries"
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "url",
@@ -31,34 +38,84 @@ func main() {
 	app.Commands = []cli.Command{
 		{
 			Name:   "ls",
-			Usage:  "sr ls [path]",
+			Usage:  "pho ls [path]",
 			Action: ls,
 			Flags:  []cli.Flag{recurseFlag},
+		},
+		{
+			Name:   "diff",
+			Usage:  "pho diff [remote path] [local path]",
+			Action: diff,
+			Flags:  []cli.Flag{recurseFlag, fetchFlag},
 		},
 	}
 
 	app.Run(os.Args)
 }
 
-func ls(ctx *cli.Context) {
+func diff(ctx *cli.Context) {
 	address := getAddress(ctx)
 	recurse := ctx.Bool("recurse")
 
-	var path string
+	remotePath := "/"
 	if len(ctx.Args()) > 0 {
-		path = ctx.Args()[0]
+		remotePath = ctx.Args()[0]
 	}
 
-	fullPath := fmt.Sprintf("/var/albums/%s", path)
-	err := walkPath(address, fullPath, recurse, "")
+	localPath := "."
+	if len(ctx.Args()) > 1 {
+		localPath = ctx.Args()[1]
+	}
+
+	onIndex := func(base string, node string, depth int) error {
+		location := path.Join(localPath, base, node)
+		_, err := os.Stat(location)
+		if os.IsNotExist(err) {
+			fmt.Printf("%s\n", location)
+		} else if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	err := walkPath(address, remotePath, recurse, 0, onIndex, doNothingOnLeaf)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 }
 
-func walkPath(address string, path string, recurse bool, lead string) error {
-	resp, err := http.Get(fmt.Sprintf("%s/%s", address, path))
+func ls(ctx *cli.Context) {
+	address := getAddress(ctx)
+	recurse := ctx.Bool("recurse")
+
+	var remotePath string
+	if len(ctx.Args()) > 0 {
+		remotePath = ctx.Args()[0]
+	}
+
+	onIndex := func(base string, node string, depth int) error {
+		fmt.Println(strings.Repeat("\t", depth) + node)
+		return nil
+	}
+
+	err := walkPath(address, remotePath, recurse, 0, onIndex, doNothingOnLeaf)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+type indexAction func(base string, node string, depth int) error
+type leafAction func(resp *http.Response, path string, contentType string) error
+
+func doNothingOnLeaf(resp *http.Response, path string, contentType string) error {
+	return nil
+}
+
+func walkPath(address string, base string, recurse bool, depth int, onIndex indexAction, onLeaf leafAction) error {
+	remotePath := path.Join("/var/albums", base)
+	resp, err := http.Get(fmt.Sprintf("%s%s", address, remotePath))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -83,20 +140,24 @@ func walkPath(address string, path string, recurse bool, lead string) error {
 					continue
 				}
 
-				ok, url := getHref(t)
+				ok, node := getHref(t)
 				if !ok {
 					return fmt.Errorf("No url for %v", t)
 				}
 
-				//probably the parent directory
-				if strings.Contains(path, url) {
+				if strings.Contains(remotePath, node) {
 					continue
 				}
 
-				fmt.Printf("%s%v\n", lead, url)
+				next := path.Join(base, node)
+
+				err := onIndex(base, node, depth)
+				if err != nil {
+					return err
+				}
 
 				if recurse {
-					err = walkPath(address, fmt.Sprintf("%v/%v", path, url), recurse, fmt.Sprintf("%s\t", lead))
+					err = walkPath(address, next, recurse, depth+1, onIndex, onLeaf)
 					if err != nil {
 						return err
 					}
@@ -104,11 +165,11 @@ func walkPath(address string, path string, recurse bool, lead string) error {
 			}
 		}
 	default:
+		onLeaf(resp, base, ct)
 	}
 
 	return nil
 }
-
 func getContentType(resp *http.Response) string {
 	parts := strings.Split(resp.Header.Get("Content-Type"), ";")
 	return parts[0]
