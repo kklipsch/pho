@@ -8,9 +8,11 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 
+	"github.com/cenkalti/backoff"
 	"github.com/urfave/cli"
 )
 
@@ -23,7 +25,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "pho"
 	app.Usage = "scraper for photo gallery 3 galleries"
-	app.Version = "1.0.0"
+	app.Version = "1.1.0"
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "url",
@@ -175,7 +177,7 @@ func doNothingOnLeaf(resp *http.Response, path string, contentType string) error
 
 func walkPath(address string, base string, recurse bool, depth int, onIndex indexAction, onLeaf leafAction) error {
 	remotePath := path.Join("/var/albums", base)
-	resp, err := http.Get(fmt.Sprintf("%s%s", address, remotePath))
+	resp, err := get(fmt.Sprintf("%s%s", address, remotePath))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -251,6 +253,22 @@ func getHref(t html.Token) (ok bool, href string) {
 			ok = true
 		}
 	}
+
+	return
+}
+
+func get(url string) (resp *http.Response, err error) {
+	op := func() error {
+		var e error
+		resp, e = http.Get(url)
+		return e
+	}
+
+	notify := func(err error, t time.Duration) {
+		log.Printf("%v waiting %v to retry...\n", err, t)
+	}
+
+	err = backoff.RetryNotify(op, backoff.NewExponentialBackOff(), notify)
 
 	return
 }
