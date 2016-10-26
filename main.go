@@ -179,7 +179,7 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 	remotePath := path.Join("/var/albums", base)
 	resp, err := get(fmt.Sprintf("%s%s", address, remotePath))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	ct := getContentType(resp)
@@ -215,7 +215,7 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 
 				err := onIndex(base, node, depth)
 				if err != nil {
-					return err
+					return fmt.Errorf("Index error: %v", err)
 				}
 
 				if recurse {
@@ -227,7 +227,10 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 			}
 		}
 	default:
-		onLeaf(resp, base, ct)
+		err = onLeaf(resp, base, ct)
+		if err != nil {
+			return fmt.Errorf("Leaf error: %v", err)
+		}
 	}
 
 	return nil
@@ -257,10 +260,12 @@ func getHref(t html.Token) (ok bool, href string) {
 	return
 }
 
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
 func get(url string) (resp *http.Response, err error) {
 	op := func() error {
 		var e error
-		resp, e = http.Get(url)
+		resp, e = httpClient.Get(url)
 		return e
 	}
 
