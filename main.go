@@ -25,7 +25,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "pho"
 	app.Usage = "scraper for photo gallery 3 galleries"
-	app.Version = "1.1.0"
+	app.Version = "1.1.1"
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "url",
