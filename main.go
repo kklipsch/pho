@@ -25,7 +25,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "pho"
 	app.Usage = "scraper for photo gallery 3 galleries"
-	app.Version = "1.1.1"
+	app.Version = "1.2.0"
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "url",
@@ -78,6 +78,8 @@ func fetch(ctx *cli.Context) {
 
 	onLeaf := func(resp *http.Response, node string, ct string) error {
 		switch ct {
+		case "image/png":
+			fallthrough
 		case "image/jpeg":
 			folder := path.Join(localPath, path.Dir(node))
 			file := path.Base(node)
@@ -175,6 +177,14 @@ func doNothingOnLeaf(resp *http.Response, path string, contentType string) error
 	return nil
 }
 
+type leafError struct {
+	inner error
+}
+
+func (l *leafError) Error() string {
+	return fmt.Sprintf("Leaf error: %v", l.inner)
+}
+
 func walkPath(address string, base string, recurse bool, depth int, onIndex indexAction, onLeaf leafAction) error {
 	remotePath := path.Join("/var/albums", base)
 	resp, err := get(fmt.Sprintf("%s%s", address, remotePath))
@@ -221,7 +231,12 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 				if recurse {
 					err = walkPath(address, next, recurse, depth+1, onIndex, onLeaf)
 					if err != nil {
-						return err
+						switch err.(type) {
+						case *leafError:
+							log.Printf("%v", err)
+						default:
+							return err
+						}
 					}
 				}
 			}
@@ -229,7 +244,7 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 	default:
 		err = onLeaf(resp, base, ct)
 		if err != nil {
-			return fmt.Errorf("Leaf error: %v", err)
+			return &leafError{err}
 		}
 	}
 
