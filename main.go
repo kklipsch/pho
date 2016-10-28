@@ -73,6 +73,7 @@ func fetch(ctx *cli.Context) {
 	}
 
 	onIndex := func(base string, node string, depth int) error {
+		log.Printf("Traversing %v", node)
 		return nil
 	}
 
@@ -86,7 +87,11 @@ func fetch(ctx *cli.Context) {
 			localFile := path.Join(folder, file)
 			_, err := os.Stat(localFile)
 			if os.IsNotExist(err) {
-				os.MkdirAll(folder, os.ModePerm)
+				err = os.MkdirAll(folder, os.ModePerm)
+				if err != nil {
+					return err
+				}
+
 				output, err := os.Create(localFile)
 				if err != nil {
 					return err
