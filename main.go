@@ -21,6 +21,10 @@ var recurseFlag = cli.BoolFlag{
 	Usage: "will recursively walk the gallery",
 }
 
+var verboseFlag = cli.BoolFlag{
+	Name: "verbose",
+}
+
 func main() {
 	app := cli.NewApp()
 	app.Name = "pho"
@@ -32,9 +36,6 @@ func main() {
 			EnvVar: "PHOTO_GALLERY_URL",
 			Usage:  "base url to the photo gallery",
 		},
-		cli.BoolFlag{
-			Name: "verbose",
-		},
 	}
 
 	app.Commands = []cli.Command{
@@ -42,19 +43,19 @@ func main() {
 			Name:   "ls",
 			Usage:  "pho ls [path]",
 			Action: ls,
-			Flags:  []cli.Flag{recurseFlag},
+			Flags:  []cli.Flag{recurseFlag, verboseFlag},
 		},
 		{
 			Name:   "diff",
 			Usage:  "pho diff [remote path] [local path]",
 			Action: diff,
-			Flags:  []cli.Flag{recurseFlag},
+			Flags:  []cli.Flag{recurseFlag, verboseFlag},
 		},
 		{
 			Name:   "fetch",
 			Usage:  "pho fetch [remote path] [local path]",
 			Action: fetch,
-			Flags:  []cli.Flag{recurseFlag},
+			Flags:  []cli.Flag{recurseFlag, verboseFlag},
 		},
 	}
 
@@ -122,7 +123,7 @@ func fetch(ctx *cli.Context) {
 		}
 	}
 
-	err := walkPath(address, remotePath, recurse, 0, onIndex, onLeaf)
+	err := walkPath(address, remotePath, recurse, 0, verbose, onIndex, onLeaf)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -132,6 +133,7 @@ func fetch(ctx *cli.Context) {
 func diff(ctx *cli.Context) {
 	address := getAddress(ctx)
 	recurse := ctx.Bool("recurse")
+	verbose := ctx.Bool("verbose")
 
 	remotePath := "/"
 	if len(ctx.Args()) > 0 {
@@ -155,7 +157,7 @@ func diff(ctx *cli.Context) {
 		return nil
 	}
 
-	err := walkPath(address, remotePath, recurse, 0, onIndex, doNothingOnLeaf)
+	err := walkPath(address, remotePath, recurse, 0, verbose, onIndex, doNothingOnLeaf)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -165,6 +167,7 @@ func diff(ctx *cli.Context) {
 func ls(ctx *cli.Context) {
 	address := getAddress(ctx)
 	recurse := ctx.Bool("recurse")
+	verbose := ctx.Bool("verbose")
 
 	var remotePath string
 	if len(ctx.Args()) > 0 {
@@ -176,7 +179,7 @@ func ls(ctx *cli.Context) {
 		return nil
 	}
 
-	err := walkPath(address, remotePath, recurse, 0, onIndex, doNothingOnLeaf)
+	err := walkPath(address, remotePath, recurse, 0, verbose, onIndex, doNothingOnLeaf)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -197,7 +200,7 @@ func (l *leafError) Error() string {
 	return fmt.Sprintf("Leaf error: %v", l.inner)
 }
 
-func walkPath(address string, base string, recurse bool, depth int, onIndex indexAction, onLeaf leafAction) error {
+func walkPath(address string, base string, recurse bool, depth int, verbose bool, onIndex indexAction, onLeaf leafAction) error {
 	remotePath := path.Join("/var/albums", base)
 	resp, err := get(fmt.Sprintf("%s%s", address, remotePath))
 	if err != nil {
@@ -216,6 +219,9 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 			switch {
 			case tt == html.ErrorToken:
 				// End of the document, we're done
+				if verbose {
+					log.Printf("End of document: %v %v", resp.Request.URL, tokenizer.Err())
+				}
 				return nil
 			case tt == html.StartTagToken:
 				t := tokenizer.Token()
@@ -241,7 +247,7 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 				}
 
 				if recurse {
-					err = walkPath(address, next, recurse, depth+1, onIndex, onLeaf)
+					err = walkPath(address, next, recurse, depth+1, verbose, onIndex, onLeaf)
 					if err != nil {
 						switch err.(type) {
 						case *leafError:
@@ -258,6 +264,10 @@ func walkPath(address string, base string, recurse bool, depth int, onIndex inde
 		if err != nil {
 			return &leafError{err}
 		}
+	}
+
+	if verbose {
+		log.Printf("Out of loop: %v %v %v", resp.Request.URL, resp.Status, ct)
 	}
 
 	return nil
