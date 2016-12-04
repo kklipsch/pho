@@ -25,12 +25,15 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "pho"
 	app.Usage = "scraper for photo gallery 3 galleries"
-	app.Version = "1.2.0"
+	app.Version = "1.2.1"
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "url",
 			EnvVar: "PHOTO_GALLERY_URL",
 			Usage:  "base url to the photo gallery",
+		},
+		cli.BoolFlag{
+			Name: "verbose",
 		},
 	}
 
@@ -61,6 +64,7 @@ func main() {
 func fetch(ctx *cli.Context) {
 	address := getAddress(ctx)
 	recurse := ctx.Bool("recurse")
+	verbose := ctx.Bool("verbose")
 
 	remotePath := "/"
 	if len(ctx.Args()) > 0 {
@@ -73,7 +77,10 @@ func fetch(ctx *cli.Context) {
 	}
 
 	onIndex := func(base string, node string, depth int) error {
-		log.Printf("Traversing %v", node)
+		if verbose {
+			log.Printf("Traversing %v", node)
+		}
+
 		return nil
 	}
 
