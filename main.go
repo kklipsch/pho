@@ -85,6 +85,7 @@ func fetch(ctx *cli.Context) {
 		return nil
 	}
 
+	count := 0
 	onLeaf := func(resp *http.Response, node string, ct string) error {
 		switch ct {
 		case "image/png":
@@ -112,7 +113,15 @@ func fetch(ctx *cli.Context) {
 					return err
 				}
 
-				fmt.Printf("Downloaded %v bytes for %s\n", n, localFile)
+				if verbose {
+					log.Printf("Downloaded %v bytes for %s\n", n, localFile)
+				}
+
+				count++
+				if count%100 == 0 {
+					log.Printf("Downloaded %v images", count)
+				}
+
 			} else if err != nil {
 				return err
 			}
@@ -203,75 +212,87 @@ func (l *leafError) Error() string {
 func walkPath(address string, base string, recurse bool, depth int, verbose bool, onIndex indexAction, onLeaf leafAction) error {
 	remotePath := path.Join("/var/albums", base)
 	resp, err := get(fmt.Sprintf("%s%s", address, remotePath))
-	if err != nil {
-		return err
-	}
 
-	ct := getContentType(resp)
-	switch ct {
-	case "text/html":
-		body := resp.Body
-		defer body.Close()
+	var ct string
+	if err == nil {
+		ct = getContentType(resp)
+		switch ct {
+		case "text/html":
+			body := resp.Body
+			nodes, err := getNodes(remotePath, body)
+			body.Close()
 
-		tokenizer := html.NewTokenizer(body)
-		for {
-			tt := tokenizer.Next()
-			switch {
-			case tt == html.ErrorToken:
-				// End of the document, we're done
-				if verbose {
-					log.Printf("End of document: %v %v", resp.Request.URL, tokenizer.Err())
-				}
-				return nil
-			case tt == html.StartTagToken:
-				t := tokenizer.Token()
-				isAnchor := t.Data == "a"
-				if !isAnchor {
-					continue
-				}
+			if err == nil {
+				for _, node := range nodes {
+					err = onIndex(base, node, depth)
+					if err == nil && recurse {
+						next := path.Join(base, node)
+						err = handleWalkError(walkPath(address, next, recurse, depth+1, verbose, onIndex, onLeaf))
+					}
 
-				ok, node := getHref(t)
-				if !ok {
-					return fmt.Errorf("No url for %v", t)
-				}
-
-				if strings.Contains(remotePath, node) {
-					continue
-				}
-
-				next := path.Join(base, node)
-
-				err := onIndex(base, node, depth)
-				if err != nil {
-					return fmt.Errorf("Index error: %v", err)
-				}
-
-				if recurse {
-					err = walkPath(address, next, recurse, depth+1, verbose, onIndex, onLeaf)
 					if err != nil {
-						switch err.(type) {
-						case *leafError:
-							log.Printf("%v", err)
-						default:
-							return err
-						}
+						break
 					}
 				}
 			}
-		}
-	default:
-		err = onLeaf(resp, base, ct)
-		if err != nil {
-			return &leafError{err}
+		default:
+			err = onLeaf(resp, base, ct)
+			if err != nil {
+				err = &leafError{err}
+			}
 		}
 	}
 
-	if verbose {
-		log.Printf("Out of loop: %v %v %v", resp.Request.URL, resp.Status, ct)
+	if err != nil {
+		err = fmt.Errorf("%v %v: %v", resp.Request.URL, resp.Status, err)
+	} else if verbose {
+		log.Printf("Done with: %v %v %v", resp.Request.URL, resp.Status, ct)
 	}
 
-	return nil
+	return err
 }
+
+func handleWalkError(err error) error {
+	if err != nil {
+		_, is := err.(*leafError)
+		if is {
+			log.Printf("%v", err)
+			err = nil
+		}
+	}
+
+	return err
+}
+
+func getNodes(remotePath string, body io.ReadCloser) (nodes []string, err error) {
+	tokenizer := html.NewTokenizer(body)
+	for err == nil {
+		tt := tokenizer.Next()
+		err = tokenizer.Err()
+
+		if err == nil && tt == html.StartTagToken {
+			t := tokenizer.Token()
+			isAnchor := t.Data == "a"
+			if isAnchor {
+				ok, node := getHref(t)
+				if !ok {
+					err = fmt.Errorf("No url for %v", t)
+				}
+
+				if !strings.Contains(remotePath, node) {
+					nodes = append(nodes, node)
+				}
+			}
+
+		}
+	}
+
+	if err == io.EOF {
+		err = nil
+	}
+	return
+}
+
 func getContentType(resp *http.Response) string {
 	parts := strings.Split(resp.Header.Get("Content-Type"), ";")
 	return parts[0]
